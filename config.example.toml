@@ -1,0 +1,47 @@
+[project]
+name = "pet"
+repository_root = 'D:\UnityReference\pet_ref'
+unity_project_path = "client"
+
+[server]
+host = "127.0.0.1"
+port = 8766
+# List the exact Host headers used for remote connections (including ports).
+allowed_hosts = []
+allowed_origins = []
+
+[search]
+include_paths = [
+    "client/Assets",
+    "client/Packages",
+    "client/ProjectSettings",
+    "client/Docs",
+    "client/LocalTests",
+]
+exclude_directories = [
+    ".git", ".idea", ".codex", ".codegraph", "Library", "Temp", "Logs",
+    "obj", "Bundles", "HybridCLRData", "Build", "Builds", "UserSettings",
+    "MemoryCaptures", "Recordings", ".vs", "node_modules",
+]
+
+[limits]
+default_search_limit = 50
+max_search_limit = 200
+search_timeout_seconds = 10
+default_read_lines = 200
+max_read_lines = 500
+max_response_bytes = 65536
+max_text_file_bytes = 8388608
+max_index_output_bytes = 134217728
+git_timeout_seconds = 45
+query_timeout_seconds = 25
+max_concurrent_queries = 4
+
+[runtime]
+# Relative paths are resolved against the service directory.
+state_dir = ".state"
+# Omit log_file to log to stderr.
+# log_file = ".state/service.log"
+# Optional absolute paths to administrator-installed executables.
+# git = 'C:\Program Files\Git\cmd\git.exe'
+# rg = 'C:\tools\ripgrep\rg.exe'

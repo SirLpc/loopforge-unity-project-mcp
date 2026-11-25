@@ -1,0 +1,21 @@
+# Local environment and service state
+/.venv/
+/.uv-cache/
+/.local-tmp/
+/.state/
+/config.toml
+.env
+.env.*
+
+# Python build and test artifacts
+/dist/
+/build/
+*.egg-info/
+__pycache__/
+*.py[co]
+.pytest_cache/
+pytest-cache-files-*/
+
+# Windows Explorer metadata
+Thumbs.db
+[Dd]esktop.ini

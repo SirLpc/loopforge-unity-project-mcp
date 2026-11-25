@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools==82.0.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "unity-project-mcp"
+version = "0.1.0"
+description = "Read-only MCP tools for a pinned Unity project repository"
+requires-python = ">=3.11"
+dependencies = [
+    "anyio==4.16.0",
+    "httpx2==2.16.2",
+    "mcp==2.3.0",
+    "pydantic==2.13.4",
+    "pywin32==312; sys_platform == 'win32'",
+    "starlette==1.10.0",
+    "uvicorn==0.41.0",
+]
+
+[project.scripts]
+unity-project-mcp = "unity_project_mcp.server:main"
+
+[dependency-groups]
+dev = ["pytest==9.0.2"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"
