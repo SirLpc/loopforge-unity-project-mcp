@@ -25,6 +25,16 @@ $env:UNITY_MCP_TOKEN = .\.venv\Scripts\python.exe -c "import secrets; print(secr
 .\.venv\Scripts\python.exe .\scripts\smoke-test.py --url http://127.0.0.1:8766/mcp
 ```
 
+### 重启 LoopForge 本机部署
+
+修改本仓库的服务代码后，在部署所用的 Windows 账号下运行：
+
+```powershell
+.\scripts\restart.ps1
+```
+
+脚本复用 `%LOCALAPPDATA%\LoopForge\UnityProjectMCP\start.ps1` 及其配置和凭据。它会核对端口归属，停止旧实例并启动新实例，等新进程开始监听后输出 MCP 地址。启动失败时，可查看部署目录下的 `restart.stderr.log` 和 `state\service.log`。依赖有变更时，请先运行 `scripts\install.ps1`。
+
 ## 配置与检索范围
 
 默认开放 `client/Assets`、`client/Packages`、`client/ProjectSettings`、`client/Docs`、`client/LocalTests` 中的已跟踪路径。其他模块可显式加入 `search.include_paths`。要开放 Bundles 或 HybridCLRData，还需从 `search.exclude_directories` 移除对应名称。Git 元数据、AI 指令目录和常见凭据文件名受固定阻止规则约束。
