@@ -82,3 +82,16 @@ def project(settings):
     from unity_project_mcp.project import Project
 
     return Project(settings)
+
+
+@pytest.fixture
+def refresh_settings(settings, reference, tmp_path):
+    remote = tmp_path / "remote.git"
+    writer = tmp_path / "writer"
+    git(tmp_path, "clone", "--bare", str(reference), str(remote))
+    git(tmp_path, "clone", str(remote), str(writer))
+    git(writer, "config", "user.name", "Remote Writer")
+    git(writer, "config", "user.email", "writer@example.invalid")
+    git(reference, "remote", "add", "origin", str(remote))
+    settings = type(settings).model_validate({**settings.model_dump(), "refresh": {"enabled": True}})
+    return settings, writer, remote

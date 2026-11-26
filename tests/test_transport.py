@@ -19,7 +19,7 @@ P1 = {"find_asset_by_guid", "get_asset_references", "get_git_log", "get_git_diff
 
 
 @pytest.fixture
-def live_service(reference, tmp_path):
+def live_service(reference, tmp_path, request):
     workspace = Path(__file__).resolve().parents[1]
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -33,6 +33,10 @@ def live_service(reference, tmp_path):
         f"[runtime]\nstate_dir='{(tmp_path / 'state').as_posix()}'\n",
         encoding="utf-8",
     )
+    if getattr(request, "param", False):
+        request.getfixturevalue("refresh_settings")
+        with config.open("a", encoding="utf-8") as stream:
+            stream.write("[refresh]\nenabled=true\n")
     output = tmp_path / "service.log"
     with output.open("wb") as logs:
         process = subprocess.Popen(
@@ -141,3 +145,29 @@ def test_real_mcp_client_discovers_and_calls_tools(live_service):
     logged = log.read_text(encoding="utf-8")
     assert "tool=read_file" in logged and "error=COMMIT_MISMATCH" in logged
     assert TOKEN not in logged and "InventoryManager" not in logged and "void Sell" not in logged
+
+
+@pytest.mark.parametrize("live_service", [True], indirect=True)
+def test_unpinned_project_info_refreshes_over_mcp(live_service, refresh_settings, reference):
+    from conftest import git
+    from test_refresh import advance
+
+    url, token, _, _ = live_service
+    _, writer, _ = refresh_settings
+    old = git(reference, "rev-parse", "HEAD")
+    updated = advance(writer)
+    headers = {**token, "Accept": "application/json, text/event-stream"}
+    with httpx2.Client(trust_env=False, headers=headers, timeout=25) as client:
+        def call(method, params=None):
+            response = client.post(url, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}})
+            response.raise_for_status()
+            return response.json()["result"]
+
+        assert "get_project_info" in {tool["name"] for tool in call("tools/list")["tools"]}
+        before = call("tools/call", {"name": "get_project_info", "arguments": {"expected_commit": old}})
+        assert not before.get("isError") and before["structuredContent"]["commit"] == old
+        after = call("tools/call", {"name": "get_project_info", "arguments": {}})
+        assert not after.get("isError")
+        result = json.loads(after["content"][0]["text"])
+        assert result["commit"] == updated
+        assert result["meta"]["refresh"]["status"] == "updated"

@@ -50,8 +50,9 @@ def remaining(deadline: float | None, maximum: float) -> float:
 
 
 class Git:
-    def __init__(self, root: Path, settings: Settings):
+    def __init__(self, root: Path, settings: Settings, *, bare: bool = False):
         self.root = root
+        self.bare = bare
         self.limits = settings.limits
         self.executable = executable("git", settings.runtime.git, root)
         self.env = command_environment(self.executable)
@@ -62,12 +63,15 @@ class Git:
         self.config_paths: tuple[Path, ...] = ()
         self.config_state: tuple = ()
         self.tracked_directories: list[Path] = []
-        local_metadata = root / ".git"
-        for path in (".git", ".git/config", ".git/config.worktree", ".git/commondir", ".git/HEAD", ".git/index",
-                     ".git/refs", ".git/objects", ".git/objects/info", ".git/objects/pack", ".git/packed-refs"):
-            ensure_no_links(root, path)
+        local_metadata = root if bare else root / ".git"
+        metadata_prefix = "" if bare else ".git/"
+        for path in ("config", "config.worktree", "commondir", "HEAD", "index", "refs", "objects",
+                     "objects/info", "objects/pack", "packed-refs"):
+            ensure_no_links(root, metadata_prefix + path)
         if not local_metadata.is_dir() or (local_metadata / "commondir").exists():
-            raise ProjectError("INVALID_CONFIG", "repository_root must be the Git repository root with local .git metadata")
+            message = ("The refresh cache must have its own local Git metadata" if bare else
+                       "repository_root must be the Git repository root with local .git metadata")
+            raise ProjectError("INVALID_CONFIG", message)
         object_store = local_metadata / "objects"
         if (object_store / "info" / "alternates").exists():
             raise ProjectError("INVALID_CONFIG", "The reference must use its own local Git object store")
@@ -80,9 +84,13 @@ class Git:
             "core.attributesFile": os.devnull, "status.submoduleSummary": "false", "grep.threads": "2",
         }
         self._set_options()
-        result = self.run("rev-parse", "--show-toplevel", codes=(0, 128))
-        if result.returncode or Path(os.fsdecode(result.stdout.rstrip(b"\r\n"))).resolve() != root:
-            raise ProjectError("INVALID_CONFIG", "repository_root must be the Git repository root")
+        if bare:
+            if self.run("rev-parse", "--is-bare-repository").stdout.strip() != b"true":
+                raise ProjectError("INVALID_CONFIG", "The refresh cache must be a bare Git repository")
+        else:
+            result = self.run("rev-parse", "--show-toplevel", codes=(0, 128))
+            if result.returncode or Path(os.fsdecode(result.stdout.rstrip(b"\r\n"))).resolve() != root:
+                raise ProjectError("INVALID_CONFIG", "repository_root must be the Git repository root")
 
         git_dir, common_dir, index_path = self.run(
             "rev-parse", "--path-format=absolute", "--absolute-git-dir", "--git-common-dir", "--git-path", "index",
@@ -91,8 +99,9 @@ class Git:
         self.index_path = Path(index_path)
         if Path(git_dir) != local_metadata or common != local_metadata or self.index_path != local_metadata / "index":
             raise ProjectError("INVALID_CONFIG", "Git metadata must stay inside the reference repository")
-        self.config_paths = (common / "config", Path(git_dir) / "config.worktree", common / "objects" / "info" / "alternates",
-                             local_metadata, object_store, object_store / "pack", object_store / "info")
+        self.config_paths = (common / "config", common / "config.worktree", object_store / "info" / "alternates")
+        if not bare:
+            self.config_paths += (local_metadata, object_store, object_store / "pack", object_store / "info")
         self.config_state = self._config_stamp()
         self._disable_filters()
 
@@ -131,13 +140,19 @@ class Git:
                     self.options[f"{name}.{operation}"] = "false" if operation == "required" else ""
         self._set_options()
 
+    def verify(self) -> None:
+        if self.bare:
+            for path in ("config", "refs", "objects", "objects/pack", "objects/info"):
+                ensure_no_links(self.root, path)
+        if self.config_paths and self._config_stamp() != self.config_state:
+            raise ProjectError("PROJECT_CHANGED", "Git configuration changed since startup")
+
     def run(
         self, *args: str, cap: int = 262144, codes: tuple[int, ...] = (0,),
         allow_partial: bool = False, deadline: float | None = None,
         input_bytes: bytes | None = None, pathspec_magic: bool = False,
     ) -> Output:
-        if self.config_paths and self._config_stamp() != self.config_state:
-            raise ProjectError("PROJECT_CHANGED", "Git configuration changed since startup")
+        self.verify()
         pathspec = [] if pathspec_magic else ["--literal-pathspecs"]
         result = run_bounded(
             [str(self.executable), "--no-pager", "--no-optional-locks", "--no-replace-objects", *pathspec, *args],

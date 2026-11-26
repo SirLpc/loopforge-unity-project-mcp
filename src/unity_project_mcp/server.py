@@ -25,6 +25,7 @@ from .errors import ProjectError
 from .git import Git
 from .models import json_bytes
 from .project import Project
+from .refresh import RefreshingProject
 from .security import ensure_no_links, normalize_path
 
 
@@ -66,7 +67,7 @@ def protect_transport(app: ASGIApp, token: str, network: ServerConfig) -> ASGIAp
     return wrapped
 
 
-def create_app(project: Project, token: str) -> ASGIApp:
+def create_app(project: Project | RefreshingProject, token: str) -> ASGIApp:
     network = project.settings.server
     mcp = MCPServer(
         "unity-project-mcp", version="0.1.0", subscriptions=False,
@@ -89,7 +90,11 @@ def create_app(project: Project, token: str) -> ASGIApp:
 
     @mcp.tool(annotations=READ_ONLY)
     async def get_project_info(expected_commit: CommitParam | None = None) -> CallToolResult:
-        """Get the Unity version, Git baseline, and repository-relative search scope."""
+        """Get Unity version, Git baseline and search scope. Begin each analysis without expected_commit to allow a refresh.
+
+        Pass the returned commit to subsequent queries. If meta.refresh.status is failed, mention the refresh failure
+        and the commit actually used.
+        """
         return await invoke("get_project_info", expected_commit=expected_commit)
 
     @mcp.tool(annotations=READ_ONLY)
@@ -204,10 +209,11 @@ def main() -> int:
             raise ProjectError("INVALID_CONFIG", f"Set {TOKEN_ENV} before starting the service")
         configure_logging(settings)
         with activity_lock(root, state):
-            project = Project(settings)
+            project = RefreshingProject(settings) if settings.refresh.enabled else Project(settings)
             app = create_app(project, token)
-            LOGGER.info("baseline commit=%s branch=%s commit_time=%s tracked_dirty=%s indexed_files=%s", project.commit,
-                        project.baseline.branch or "(detached)", project.commit_time, project.baseline.dirty, len(project.files))
+            baseline = project.current if isinstance(project, RefreshingProject) else project
+            LOGGER.info("baseline commit=%s branch=%s commit_time=%s tracked_dirty=%s indexed_files=%s", baseline.commit,
+                        baseline.baseline.branch or "(detached)", baseline.commit_time, baseline.baseline.dirty, len(baseline.files))
             uvicorn.run(app, host=settings.server.host, port=settings.server.port, access_log=False,
                         proxy_headers=False, server_header=False, ws="none")
         return 0

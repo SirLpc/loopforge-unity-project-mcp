@@ -12,7 +12,7 @@ from time import monotonic
 from .assets import Assets
 from .config import DEFAULT_FOLDERS, Settings, executable
 from .errors import ProjectError
-from .git import Entry, Git, remaining
+from .git import Baseline, Entry, Git, remaining
 from .history import History
 from .models import Page, Pagination, json_bytes
 from .process import QUERY_DEADLINE, command_environment, run_bounded
@@ -45,15 +45,20 @@ def suffixes(values: list[str] | None) -> frozenset[str]:
 
 
 class Project:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, *, git: Git | None = None, baseline: Baseline | None = None):
         self.settings = settings
         self.limits = settings.limits
         self.repository_root, self.state_dir, _ = settings.locations()
         self.service_root = settings.service_root.resolve()
+        reference_root = self.repository_root
+        if git is not None:
+            self.repository_root = git.root
         if not self.repository_root.is_dir():
             raise ProjectError("INVALID_CONFIG", "repository_root must be an existing Git repository root")
-        self.git = Git(self.repository_root, settings)
-        self.rg = executable("rg", settings.runtime.rg, self.repository_root)
+        self.git = git or Git(self.repository_root, settings)
+        self.rg = executable("rg", settings.runtime.rg, reference_root)
+        if self.git.bare and self.rg.is_relative_to(self.repository_root):
+            raise ProjectError("INVALID_CONFIG", "rg must be installed outside the refresh cache")
         self.rg_env = command_environment(self.rg)
         self.unity_path = normalize_path(settings.project.unity_project_path)
         if self.unity_path == ".":
@@ -63,21 +68,22 @@ class Project:
         self.version_path = f"{self.unity_path}/ProjectSettings/ProjectVersion.txt"
         self.manifest_path = f"{self.unity_path}/Packages/manifest.json"
         self.lock_path = f"{self.unity_path}/Packages/packages-lock.json"
-        for folder in (*DEFAULT_FOLDERS[:3], "ProjectSettings/ProjectVersion.txt"):
-            rel = f"{self.unity_path}/{folder}"
-            ensure_no_links(self.repository_root, rel)
-            required = self.repository_root / rel
-            if not (required.is_file() if rel == self.version_path else required.is_dir()):
-                raise ProjectError("INVALID_CONFIG", "Unity project requires Assets, Packages, ProjectSettings and ProjectVersion.txt")
-
         self.policy = PathPolicy(self.repository_root, self.unity_path, settings.search.include_paths,
                                  settings.search.exclude_directories)
         self.changed = Event()
-        self.git.check_index_flags()
-        self.index_stamp = self.git.file_stamp(self.git.index_path)
-        self.baseline = self.git.status()
-        if self.baseline.dirty:
-            raise ProjectError("PROJECT_CHANGED", "The reference repository has uncommitted tracked changes")
+        if baseline is None:
+            for folder in (*DEFAULT_FOLDERS[:3], "ProjectSettings/ProjectVersion.txt"):
+                rel = f"{self.unity_path}/{folder}"
+                ensure_no_links(self.repository_root, rel)
+                required = self.repository_root / rel
+                if not (required.is_file() if rel == self.version_path else required.is_dir()):
+                    raise ProjectError("INVALID_CONFIG", "Unity project requires Assets, Packages, ProjectSettings and ProjectVersion.txt")
+            self.git.check_index_flags()
+            self.index_stamp = self.git.file_stamp(self.git.index_path)
+            baseline = self.git.status()
+            if baseline.dirty:
+                raise ProjectError("PROJECT_CHANGED", "The reference repository has uncommitted tracked changes")
+        self.baseline = baseline
         self.commit = self.baseline.commit
         self.commit_time = self.git.run("show", "-s", "--no-show-signature", "--no-notes", "--format=%cI", self.commit,
                                         "--").stdout.decode("ascii").strip()
@@ -92,7 +98,14 @@ class Project:
         self.verify()
 
     def _build_catalog(self) -> None:
+        required_folders = {f"{self.unity_path}/{folder}" for folder in DEFAULT_FOLDERS[:3]} if self.git.bare else set()
+        has_version = not self.git.bare
         for entry in self.git.entries(self.commit):
+            if self.git.bare and entry.path.startswith(self.unity_path + "/"):
+                folder, separator, _ = entry.path[len(self.unity_path) + 1:].partition("/")
+                if separator:
+                    required_folders.discard(f"{self.unity_path}/{folder}")
+                has_version |= entry.path == self.version_path
             try:
                 if normalize_path(entry.path) != entry.path or not self.policy.allows(entry.path):
                     continue
@@ -112,7 +125,13 @@ class Project:
                 self.directories[parent_key] = parent
                 parent = parent.rpartition("/")[0]
 
+        if required_folders or not has_version:
+            raise ProjectError("INVALID_CONFIG", "The commit is missing required Unity project files")
+
     def verify(self) -> None:
+        if self.git.bare:
+            self.git.verify()
+            return
         if self.changed.is_set():
             raise ProjectError("PROJECT_CHANGED", "The reference baseline changed. Stop the service and restart after verification")
         try:
@@ -132,7 +151,10 @@ class Project:
         duration = self.limits.query_timeout_seconds
         if name in SEARCH_TOOLS:
             duration = min(duration, self.limits.search_timeout_seconds)
-        deadline = QUERY_DEADLINE.set(started + duration)
+        deadline = started + duration
+        if outer_deadline := QUERY_DEADLINE.get():
+            deadline = min(deadline, outer_deadline)
+        deadline_token = QUERY_DEADLINE.set(deadline)
         try:
             if name not in TOOL_NAMES:
                 raise ProjectError("INVALID_ARGUMENT", "Unknown project tool")
@@ -152,7 +174,7 @@ class Project:
         except Exception:
             return self.failed(name, started, ProjectError("INTERNAL_ERROR", "The project query could not be completed"))
         finally:
-            QUERY_DEADLINE.reset(deadline)
+            QUERY_DEADLINE.reset(deadline_token)
 
     def _result(self, started: float, page: Page) -> dict:
         return {"success": True, "commit": self.commit, "data": page.data, "meta": {

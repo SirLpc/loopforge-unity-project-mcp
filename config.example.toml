@@ -45,3 +45,11 @@ state_dir = ".state"
 # Optional absolute paths to administrator-installed executables.
 # git = 'C:\Program Files\Git\cmd\git.exe'
 # rg = 'C:\tools\ripgrep\rg.exe'
+
+[refresh]
+# Enable the first unpinned get_project_info call after the cooldown to check the remote.
+enabled = false
+remote = "origin"
+branch = "main"
+cooldown_seconds = 60
+timeout_seconds = 15

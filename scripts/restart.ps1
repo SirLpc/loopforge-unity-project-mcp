@@ -1,3 +1,5 @@
+param([ValidateRange(1, 3600)][int]$StartupTimeoutSeconds = 45)
+
 $ErrorActionPreference = 'Stop'
 $source = Split-Path -Parent $PSScriptRoot
 $deployment = Join-Path $env:LOCALAPPDATA 'LoopForge\UnityProjectMCP'
@@ -80,8 +82,8 @@ try {
             return
         }
         Start-Sleep -Milliseconds 500
-    } while ($elapsed.Elapsed.TotalSeconds -lt 45)
-    throw "MCP did not listen within 45 seconds. See $stderrLog and $deployment\state\service.log."
+    } while ($elapsed.Elapsed.TotalSeconds -lt $StartupTimeoutSeconds)
+    throw "MCP did not listen within $StartupTimeoutSeconds seconds. See $stderrLog and $deployment\state\service.log."
 } finally {
     $restartLock.Dispose()
 }

@@ -62,13 +62,30 @@ $env:UNITY_MCP_TOKEN = .\.venv\Scripts\python.exe -c "import secrets; print(secr
 
 ## 更新参考仓库
 
+要在 Chat 开始查源码时自动检查远端，在服务使用的配置中加入：
+
+```toml
+[refresh]
+enabled = true
+remote = "origin"
+branch = "main"
+cooldown_seconds = 60
+timeout_seconds = 15
+```
+
+初次启用后运行 `./scripts/restart.ps1 -StartupTimeoutSeconds 330`。服务用当前分支上干净的参考检出初始化状态目录中的独立裸仓库，需要额外空间存放 Git 对象。首次复制最长等待 300 秒，后续重启可复用缓存。首次查询和冷却结束后的下一次无 `expected_commit` 的 `get_project_info` 会检查配置的远端分支。同一服务的并发请求共用一次检查。冷却时间从尝试结束算起，远端不可用或新提交无法快进时继续使用上次可查询的 SHA。
+
+`meta.refresh.status` 返回 `updated`、`unchanged` 或 `failed`，`checked_at` 是该次刷新结束的 UTC 时间。查询继续使用顶层 `commit`。收到 `COMMIT_MISMATCH` 时，重新读项目概况并按新的 SHA 查询。远端读取使用 Windows 部署账号的 Git 凭据，应可无交互访问。自动刷新默认关闭。
+
+### 手动快进本地检出
+
 停止服务后，由持有参考仓库写权限的管理员使用同一份配置同步。同步脚本先验证 Git 根目录、分支和工作区，再尝试快进，输出同步前后的完整 SHA。
 
 ```powershell
 .\scripts\sync-reference.ps1 -Config .\config.toml -ExpectedBranch main -Remote origin
 ```
 
-启动服务后重新获取 `get_project_info`，确认更新后的 SHA。未来开发 Worker 可用该 SHA 复现分析基线。
+手动同步更新参考目录中的本地检出。重新启动服务并获取 `get_project_info` 确认查询基线。启用自动刷新时，服务优先恢复状态目录中的查询基线，并按需同步远端。
 
 ## 测试与部署
 

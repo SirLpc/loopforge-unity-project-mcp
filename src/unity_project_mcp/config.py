@@ -91,12 +91,21 @@ class RuntimeConfig(ConfigModel):
     rg: Path | None = None
 
 
+class RefreshConfig(ConfigModel):
+    enabled: bool = False
+    remote: str = Field(default="origin", pattern=r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+    branch: str = Field(default="main", min_length=1, max_length=240)
+    cooldown_seconds: float = Field(default=60, gt=0, le=86400)
+    timeout_seconds: float = Field(default=15, gt=0, le=300)
+
+
 class Settings(ConfigModel):
     project: ProjectConfig
     server: ServerConfig = Field(default_factory=ServerConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
     limits: Limits = Field(default_factory=Limits)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
+    refresh: RefreshConfig = Field(default_factory=RefreshConfig)
     service_root: Path = SERVICE_ROOT
 
     def locations(self) -> tuple[Path, Path, Path | None]:
